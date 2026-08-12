@@ -152,6 +152,29 @@ class QEMUDockerRuntime(DockerRuntime):
         return info
 
 
+# UEFI firmware for Windows guests, as (code, vars-template) pairs. The two halves
+# are sized to match each other, so they are always taken from the same entry — a
+# 4 MB OVMF build paired with a 2 MB varstore leaves the guest unable to boot.
+# Paths are relative to the bundled QEMU directory, or absolute for system installs.
+_UEFI_FIRMWARE_CANDIDATES: list[tuple[str, str]] = [
+    ("share/edk2-x86_64-code.fd", "share/edk2-i386-vars.fd"),
+    ("/usr/share/OVMF/OVMF_CODE_4M.fd", "/usr/share/OVMF/OVMF_VARS_4M.fd"),
+    ("/usr/share/OVMF/OVMF_CODE.fd", "/usr/share/OVMF/OVMF_VARS.fd"),
+    ("/usr/share/qemu/edk2-x86_64-code.fd", "/usr/share/qemu/edk2-i386-vars.fd"),
+]
+
+
+def _locate_uefi_firmware(qemu_dir: Path) -> tuple[Optional[Path], Optional[Path]]:
+    """Return the first (OVMF code, matching vars template) pair present on this host."""
+    for code_name, vars_name in _UEFI_FIRMWARE_CANDIDATES:
+        code = Path(code_name) if code_name.startswith("/") else qemu_dir / code_name
+        if not code.exists():
+            continue
+        template = Path(vars_name) if vars_name.startswith("/") else qemu_dir / vars_name
+        return code, template if template.exists() else None
+    return None, None
+
+
 class QEMUBaremetalRuntime(Runtime):
     """Bare-metal QEMU — launches qemu-system-* directly on the host.
 
@@ -258,24 +281,16 @@ class QEMUBaremetalRuntime(Runtime):
 
         # Locate OVMF UEFI firmware for Windows VMs
         qemu_dir = Path(self._qemu_bin()).parent
-        ovmf_code = None
-        if image.os_type == "windows":
-            for candidate in [
-                qemu_dir / "share" / "edk2-x86_64-code.fd",
-                Path("/usr/share/OVMF/OVMF_CODE.fd"),
-                Path("/usr/share/qemu/edk2-x86_64-code.fd"),
-            ]:
-                if candidate.exists():
-                    ovmf_code = candidate
-                    break
+        ovmf_code, vars_template = (
+            _locate_uefi_firmware(qemu_dir) if image.os_type == "windows" else (None, None)
+        )
 
-        # EFI vars — look next to disk or copy template
+        # EFI vars — look next to disk or copy the template that matches the firmware
         efivars = Path(disk_path).parent / "efivars.fd"
         if ovmf_code and not efivars.exists():
             import shutil as _shutil
 
-            vars_template = qemu_dir / "share" / "edk2-i386-vars.fd"
-            if vars_template.exists():
+            if vars_template is not None:
                 _shutil.copy2(vars_template, efivars)
             else:
                 efivars.write_bytes(b"\x00" * (256 * 1024))

@@ -72,6 +72,19 @@ def test_registry_image_becomes_typed_template_request():
     ]
 
 
+def test_builtin_images_become_typed_template_requests():
+    from cua_sandbox.image import (
+        DEFAULT_LINUX_REGISTRY_IMAGE,
+        DEFAULT_WINDOWS_REGISTRY_IMAGE,
+    )
+
+    linux = FleetCloudTransport(image=Image.linux(), name="linux")._template_request()
+    windows = FleetCloudTransport(image=Image.windows(), name="windows")._template_request()
+
+    assert linux.spec.vm_template.container_disk_image == DEFAULT_LINUX_REGISTRY_IMAGE
+    assert windows.spec.vm_template.container_disk_image == DEFAULT_WINDOWS_REGISTRY_IMAGE
+
+
 def test_pool_request_uses_the_single_sandbox_name_and_requested_replicas():
     request = FleetCloudTransport(
         image=Image.from_registry("registry.example/workspace@sha256:abc"),
@@ -133,7 +146,12 @@ async def test_fleet_client_lookup_uses_bounded_deterministic_claim_name():
 
 
 @pytest.mark.parametrize(
-    "image", [Image.linux(), Image.from_registry("example:latest").apt_install("curl")]
+    "image",
+    [
+        Image.linux("debian", "12"),
+        Image.windows("10"),
+        Image.from_registry("example:latest").apt_install("curl"),
+    ],
 )
 def test_rejects_unsupported_images(image):
     with pytest.raises(NotImplementedError):

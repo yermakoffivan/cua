@@ -28,6 +28,25 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_LINUX_REGISTRY_IMAGE = (
+    "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:main-38352d34"
+)
+# The guest on this disk is Windows Server 2022 (build 10.0.20348), not client
+# Windows 11 — it is the only Windows containerDisk that is still built on main.
+# ``Image.windows("2022")`` names it accurately; ``Image.windows()`` keeps
+# resolving to it so the documented default has a disk to boot at all.
+DEFAULT_WINDOWS_REGISTRY_IMAGE = (
+    "296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-server-windows:main-bac7daa3"
+)
+
+# Built-in image descriptors that resolve to a pinned KubeVirt containerDisk, so
+# Fleet cloud and the local QEMU runtime boot byte-identical disks.
+BUILTIN_REGISTRY_IMAGES: Dict[Tuple[str, str, str, Optional[str]], str] = {
+    ("linux", "ubuntu", "24.04", "vm"): DEFAULT_LINUX_REGISTRY_IMAGE,
+    ("windows", "windows", "11", "vm"): DEFAULT_WINDOWS_REGISTRY_IMAGE,
+    ("windows", "windows", "2022", "vm"): DEFAULT_WINDOWS_REGISTRY_IMAGE,
+}
+
 _IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
 
 
@@ -477,3 +496,15 @@ class Image:
             f"Image({self.os_type}/{self.distro}:{self.version}, "
             f"kind={self.kind}, {len(self._layers)} layers{reg})"
         )
+
+
+def cloud_registry_image(image: Image) -> Optional[str]:
+    """Return the explicit or built-in containerDisk reference for an image.
+
+    An explicit ``Image.from_registry(...)`` reference always wins; otherwise the
+    built-in descriptors resolve through :data:`BUILTIN_REGISTRY_IMAGES`. Images
+    with no pinned disk (custom distros, container kinds) return ``None``.
+    """
+    if image._registry is not None:
+        return image._registry
+    return BUILTIN_REGISTRY_IMAGES.get((image.os_type, image.distro, image.version, image.kind))
